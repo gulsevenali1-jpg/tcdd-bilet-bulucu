@@ -1,3 +1,5 @@
+binis_istasyon_id = 1135   # İZMİT YHT
+inis_istasyon_id = 93      # ESKİŞEHİR
 # Journey details (check stations.json for valid station names)
 binis_istasyon_adi = "İstanbul(Söğütlüçeşme)"
 inis_istasyon_adi = "Ankara Gar"
