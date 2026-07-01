@@ -1,84 +1,62 @@
-from .api import post_request
-from .mail import send_email
-from .util import load_stations, format_date
-import config
 import datetime
+import config
+from .mail import send_email
+from .api import post_request
 
-stations = load_stations()
-binis_istasyon_id = stations.get(config.binis_istasyon_adi)
-inis_istasyon_id = stations.get(config.inis_istasyon_adi)
-formatted_date = format_date(config.date)
+url = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1"
 
-sefer_url = "https://api-yebsp.tcddtasimacilik.gov.tr/sefer/seferSorgula"
-vagon_url = "https://api-yebsp.tcddtasimacilik.gov.tr/vagon/vagonHaritasindanYerSecimi"
-
-# Function to fetch and filter journeys
 def fetch_and_filter_journeys():
-    formatted_date = format_date(config.date)
+    departure_date = datetime.datetime.strptime(config.date, "%Y-%m-%d").strftime("%d-%m-%Y")
     body = {
-        "kanalKodu": 3,
-        "dil": 0,
-        "seferSorgulamaKriterWSDVO": {
-            "satisKanali": 3,
-            "binisIstasyonu": config.binis_istasyon_adi,
-            "inisIstasyonu": config.inis_istasyon_adi,
-            "binisIstasyonId": binis_istasyon_id,
-            "inisIstasyonId": inis_istasyon_id,
-            "binisIstasyonu_isHaritaGosterimi": False,
-            "inisIstasyonu_isHaritaGosterimi": False,
-            "seyahatTuru": 1,
-            "gidisTarih": f"{formatted_date} 00:00:00 AM",
-            "bolgeselGelsin": False,
-            "islemTipi": 0,
-            "yolcuSayisi": 1,
-            "aktarmalarGelsin": True,
-        }
+        "searchRoutes": [
+            {
+                "departureStationId": config.binis_istasyon_id,
+                "departureStationName": config.binis_istasyon_adi,
+                "arrivalStationId": config.inis_istasyon_id,
+                "arrivalStationName": config.inis_istasyon_adi,
+                "departureDate": f"{departure_date} 00:00:00"
+            }
+        ],
+        "passengerTypeCounts": [{"id": 0, "count": 1}],
+        "searchReservation": False,
+        "searchType": "DOMESTIC",
+        "blTrainTypes": ["TURISTIK_TREN"]
     }
-
-    print(f"Checking for date: {formatted_date}")
-    response = post_request(sefer_url, body)
+    print(f"Checking for date: {config.date}")
+    response = post_request(url, body)
+    print("STATUS:", response.status_code)
+    if response.status_code != 200:
+        print("RAW RESPONSE:", response.text[:500])
+        return
     data = response.json()
+    for leg in data.get("trainLegs", []):
+        for availability in leg.get("trainAvailabilities", []):
+            for train in availability.get("trains", []):
+                check_train(train)
 
-    if data['cevapBilgileri']['cevapKodu'] == '000':
-        for sefer in data['seferSorgulamaSonucList']:
-            sefer_time = datetime.datetime.strptime(sefer['binisTarih'], "%b %d, %Y %I:%M:%S %p")
-            if config.check_specific_hour:
-                specified_time = datetime.datetime.strptime(f"{config.date} {config.hour}", "%Y-%m-%d %H:%M")
-                if sefer_time.strftime("%H:%M") == specified_time.strftime("%H:%M"):
-                    check_sefer(sefer)
-            else:
-                check_sefer(sefer)
+def check_train(train):
+    departure_time_str = None
+    for seg in train.get("trainSegments", []):
+        if seg["departureStationId"] == config.binis_istasyon_id:
+            departure_time_str = seg["departureTime"]
+            break
+    if not departure_time_str:
+        return
 
+    departure_dt = datetime.datetime.fromisoformat(departure_time_str)
 
-# Function to check available seats in a journey
-def check_sefer(sefer):
-    print(f"Checking for time: {sefer['binisTarih']}")
-    for vagon in sefer['vagonTipleriBosYerUcret']:
-        for vagon_detail in vagon['vagonListesi']:
-            vagon_sira_no = vagon_detail['vagonSiraNo']
-            print(f"Checking for vagon: {vagon_sira_no}")
-            check_specific_seats(sefer['seferId'], vagon_sira_no, sefer['trenAdi'], sefer['binisTarih'])
+    if departure_dt.strftime("%Y-%m-%d") != config.date:
+        return
 
+    if config.istekli_saatler and departure_dt.strftime("%H:%M") not in config.istekli_saatler:
+        return
 
-# Function to check for specific seats in a wagon
-def check_specific_seats(seferId, vagon_sira_no, tren_adi, binis_tarih):
-    body = {
-        "kanalKodu": "3",
-        "dil": 0,
-        "seferBaslikId": seferId,
-        "vagonSiraNo": vagon_sira_no,
-        "binisIst": config.binis_istasyon_adi,
-        "InisIst": config.inis_istasyon_adi
-    }
-    
-    response = post_request(vagon_url, body)
-    data = response.json()
-
-    if data['cevapBilgileri']['cevapKodu'] == '000':
-        for seat in data['vagonHaritasiIcerikDVO']['koltukDurumlari']:
-            if seat['durum'] == 0: # Available
-                if not seat['koltukNo'].endswith('h'): # Not Handicapped 
-                    print(f"Available seat: {seat['koltukNo']} in Wagon {vagon_sira_no}")
-                    send_email(tren_adi, binis_tarih, vagon_sira_no, seat['koltukNo'])
-                else: # Handicapped
-                    print(f"Available handicapped seat: {seat['koltukNo']} in Wagon {vagon_sira_no}")
+    for cca in train.get("cabinClassAvailabilities", []):
+        if cca["cabinClass"]["name"] == "EKONOMİ" and cca["availabilityCount"] > 0:
+            print(f"Available: {cca['availabilityCount']} EKONOMİ seat(s) on {train['name']} at {departure_dt.strftime('%H:%M')}")
+            send_email(
+                train["name"],
+                departure_dt.strftime("%Y-%m-%d %H:%M"),
+                "-",
+                f"{cca['availabilityCount']} boş yer"
+            )
