@@ -1,0 +1,21 @@
+name: TCDD Koltuk Kontrol
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check-seats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bağımlılıkları kur
+        run: pip3 install -r requirements.txt
+      - name: Taramayı başlat
+        env:
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python3 main.py
