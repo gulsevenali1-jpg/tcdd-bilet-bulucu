@@ -1,3 +1,4 @@
+import os
 binis_istasyon_id = 1135
 inis_istasyon_id = 93
 binis_istasyon_adi = "İZMİT YHT"
